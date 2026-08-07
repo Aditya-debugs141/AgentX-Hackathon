@@ -60,7 +60,7 @@ export default function ChatWindow({
 							animate={{ opacity: 1, y: 0, scale: 1 }}
 							transition={{ type: "spring", stiffness: 260, damping: 20 }}
 						>
-							<MessageBubble message={message} index={index} />
+							<MessageBubble message={message} index={index} isLatest={index === messages.length - 1} isTyping={isTyping} />
 						</motion.div>
 					))}
 				</AnimatePresence>
