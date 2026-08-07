@@ -21,7 +21,8 @@ app.add_middleware(
 
 # Environment configuration
 HERMES_MODE = os.getenv("HERMES_MODE", "proxy")  # "proxy" or "webhook"
-HERMES_ENDPOINT_URL = os.getenv("HERMES_ENDPOINT_URL", "")  # e.g., https://xxxx.ngrok-free.app/v1/chat/completions or /webhook/my-endpoint
+# Read HERMES_ENDPOINT or HERMES_ENDPOINT_URL
+HERMES_ENDPOINT_URL = os.getenv("HERMES_ENDPOINT") or os.getenv("HERMES_ENDPOINT_URL", "")
 HERMES_HMAC_SECRET = os.getenv("HERMES_HMAC_SECRET", "")
 FRONTEND_API_KEY = os.getenv("FRONTEND_API_KEY", "")
 
@@ -59,6 +60,12 @@ async def chat_endpoint(request: ChatRequest):
             sources=["Placement Policy 2026"]
         )
 
+    # Determine full target URL
+    target_url = HERMES_ENDPOINT_URL.strip()
+    if HERMES_MODE == "proxy":
+        if not target_url.endswith("/v1/chat/completions") and not target_url.endswith("/chat/completions"):
+            target_url = target_url.rstrip("/") + "/v1/chat/completions"
+
     async with httpx.AsyncClient(timeout=60.0) as client:
         if HERMES_MODE == "proxy":
             # 1. Hermes OpenAI-compatible Proxy / API Server endpoint
@@ -73,7 +80,7 @@ async def chat_endpoint(request: ChatRequest):
                     {"role": "user", "content": request.message}
                 ]
             }
-            res = await client.post(HERMES_ENDPOINT_URL, json=payload, headers=headers)
+            res = await client.post(target_url, json=payload, headers=headers)
             if res.status_code != 200:
                 raise HTTPException(status_code=res.status_code, detail=f"Hermes Proxy error: {res.text}")
             
