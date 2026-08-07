@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import httpx
+from pathlib import Path
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Depends
@@ -11,11 +12,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
-# Guarded environment variable loading.
-# python-dotenv is safe and will NOT overwrite existing environment variables.
-# This check prevents it from running unnecessarily if variables are already loaded.
-if not os.getenv("HERMES_ENDPOINT") and not os.getenv("WEB_API_KEY"):
-    load_dotenv()
+# Load the local file for development, while preserving variables injected by
+# Vercel (python-dotenv does not overwrite existing environment variables).
+# Vercel does not deploy the ignored .env file, so production values must be
+# configured in the Vercel project settings.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+
+
+def env_value(*names: str) -> Optional[str]:
+    """Return the first configured environment value, trimmed for dashboard input."""
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and value.strip():
+            return value.strip()
+    return None
 
 # Configure standard logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -24,6 +34,14 @@ logger = logging.getLogger("agentx")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("[STARTUP] AgentX API is starting up...")
+    logger.info(
+        "[CONFIG] HERMES_ENDPOINT loaded=%s; HERMES_API_KEY loaded=%s; "
+        "WEB_API_KEY loaded=%s; mode=%s",
+        bool(env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL")),
+        bool(env_value("HERMES_API_KEY", "API_SERVER_KEY")),
+        bool(env_value("WEB_API_KEY")),
+        os.getenv("HERMES_MODE", "proxy"),
+    )
     yield
     logger.info("[SHUTDOWN] AgentX API is shutting down...")
 
@@ -54,6 +72,11 @@ class ChatResponse(BaseModel):
 def verify_frontend_api_key(x_api_key: Optional[str] = Header(None)):
     """Optional security: check API key from frontend if WEB_API_KEY is set."""
     web_api_key = os.getenv("WEB_API_KEY")
+    logger.info(
+        "[CONFIG] WEB_API_KEY loaded=%s; request_key_received=%s",
+        bool(web_api_key and web_api_key.strip()),
+        bool(x_api_key),
+    )
     if web_api_key and x_api_key != web_api_key:
         logger.warning("[AUTH] Web API key verification failed!")
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
@@ -62,7 +85,7 @@ def verify_frontend_api_key(x_api_key: Optional[str] = Header(None)):
 @app.get("/health")
 async def health_check():
     """Health check endpoint for frontend status indicator."""
-    has_endpoint = bool(os.getenv("HERMES_ENDPOINT") or os.getenv("HERMES_ENDPOINT_URL"))
+    has_endpoint = bool(env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL"))
     return {
         "status": "ok",
         "hermes_configured": has_endpoint,
@@ -72,8 +95,8 @@ async def health_check():
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_frontend_api_key)])
 async def chat_endpoint(request: ChatRequest):
     """Proxies a chat message to the Hermes Agent and returns the response."""
-    target_url = os.getenv("HERMES_ENDPOINT") or os.getenv("HERMES_ENDPOINT_URL")
-    hermes_api_key = os.getenv("HERMES_API_KEY") or os.getenv("API_SERVER_KEY") or ""
+    target_url = env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL")
+    hermes_api_key = env_value("HERMES_API_KEY", "API_SERVER_KEY") or ""
 
     logger.info(f"[REQUEST RECEIVED] conversation_id='{request.conversation_id}', message='{request.message}'")
 

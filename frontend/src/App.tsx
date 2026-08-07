@@ -5,14 +5,22 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import TextareaAutosize from 'react-textarea-autosize';
 
-// Resolve the API base URL once:
-// - In production on Vercel, VITE_API_BASE_URL can be empty string => use relative URLs (same origin)
-// - In dev on localhost, default to http://localhost:8000
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Resolve the API base URL once. Vite substitutes import.meta.env at build time;
+// an unset variable must therefore not fall back to localhost in a deployment.
+// The Vercel deployment serves the frontend and API from the same origin.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
 // Read the optional frontend API key from environment variables.
 // This key is required if the backend has WEB_API_KEY set.
 const WEB_API_KEY = import.meta.env.VITE_WEB_API_KEY;
+
+// Safe deployment diagnostics: report presence and routing mode, never values.
+console.info('[AgentX config]', {
+  mode: import.meta.env.MODE,
+  apiBaseUrlConfigured: Boolean(import.meta.env.VITE_API_BASE_URL),
+  apiRouting: API_BASE_URL ? API_BASE_URL : 'same-origin',
+  webApiKeyConfigured: Boolean(WEB_API_KEY),
+});
 
 function App() {
   const [prompt, setPrompt] = useState('');
