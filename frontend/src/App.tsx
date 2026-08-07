@@ -1,18 +1,57 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Bot, User, Cpu, Briefcase, Calendar as CalendarIcon, Server, Library, Sparkles, Loader2, BookOpen, Clock, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import TextareaAutosize from 'react-textarea-autosize';
 
+// Resolve the API base URL once:
+// - In production on Vercel, VITE_API_BASE_URL can be empty string => use relative URLs (same origin)
+// - In dev on localhost, default to http://localhost:8000
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+// Read the optional frontend API key from environment variables.
+// This key is required if the backend has WEB_API_KEY set.
+const WEB_API_KEY = import.meta.env.VITE_WEB_API_KEY;
+
 function App() {
   const [prompt, setPrompt] = useState('');
-  const [messages, setMessages] = useState<{id: string, role: 'user' | 'agent', text: string, ui_card?: 'event' | 'schedule' | null, trace?: string[]}[]>([
-    { id: 'msg-0', role: 'agent', text: 'System initialized. I am your Smart Campus Assistant powered by the Hermes Orchestrator Engine. How can I help you today?' }
+  const [messages, setMessages] = useState<{ id: string, role: 'user' | 'agent', text: string, ui_card?: 'event' | 'schedule' | null, trace?: string[] }[]>([
+    { id: 'msg-init', role: 'agent', text: 'System initialized. I am your Smart Campus Assistant powered by the Hermes Orchestrator Engine. How can I help you today?' }
   ]);
   const [isTyping, setIsTyping] = useState(false);
   const [conversationId] = useState('conv_' + Math.random().toString(36).substring(7));
+  const [activeAgent, setActiveAgent] = useState<'Orchestrator' | 'Placement Agent' | 'Events Agent' | 'Knowledge Agent'>('Orchestrator');
+
+  const agentKeywords: Record<string, 'Placement Agent' | 'Events Agent' | 'Knowledge Agent'> = {
+    'placement': 'Placement Agent', 'job': 'Placement Agent', 'career': 'Placement Agent', 'company': 'Placement Agent', 'google': 'Placement Agent',
+    'event': 'Events Agent', 'workshop': 'Events Agent', 'register': 'Events Agent',
+    'course': 'Knowledge Agent', 'schedule': 'Knowledge Agent', 'attendance': 'Knowledge Agent', 'student': 'Knowledge Agent'
+  };
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Backend health check state
+  const [backendHealth, setBackendHealth] = useState<'checking' | 'online' | 'offline'>('checking');
+
+  // Health check polling
+  const checkHealth = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/health`, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        setBackendHealth('online');
+      } else {
+        setBackendHealth('offline');
+      }
+    } catch {
+      setBackendHealth('offline');
+    }
+  }, []);
+
+  useEffect(() => {
+    checkHealth();
+    const interval = setInterval(checkHealth, 15000);
+    return () => clearInterval(interval);
+  }, [checkHealth]);
 
   // Auto-scroll to bottom of chat
   useEffect(() => {
@@ -24,35 +63,54 @@ function App() {
   const handleSend = async () => {
     if (!prompt.trim()) return;
     
+    // Detect active agent based on prompt
+    const lowerCasePrompt = prompt.toLowerCase();
+    let detectedAgent: 'Orchestrator' | 'Placement Agent' | 'Events Agent' | 'Knowledge Agent' = 'Orchestrator';
+    for (const keyword in agentKeywords) {
+      if (lowerCasePrompt.includes(keyword)) {
+        detectedAgent = agentKeywords[keyword];
+        break;
+      }
+    }
+    setActiveAgent(detectedAgent);
+
     const userMessage = prompt;
     setPrompt('');
-    
-    const userMsgId = 'msg-' + Date.now();
+    const userMsgId = `${conversationId}-user-${messages.length}`;
     setMessages(prev => [...prev, { id: userMsgId, role: 'user', text: userMessage }]);
     setIsTyping(true);
 
     try {
-      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiBaseUrl}/chat`, {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      // Securely add the API key header if it's defined in the environment.
+      if (WEB_API_KEY) {
+        headers['x-api-key'] = WEB_API_KEY;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify({
           conversation_id: conversationId,
           message: userMessage
         }),
       });
 
-      if (!response.ok) throw new Error('Network response was not ok');
+      if (!response.ok) {
+        const errBody = await response.text();
+        console.error('Backend error:', response.status, errBody);
+        throw new Error(errBody || `Request failed with status ${response.status}`);
+      }
       
       const data = await response.json();
       
-      // Determine if we should show a mock rich card based on keywords
+      // Determine if we should show a rich card based on keywords
       let cardType: 'event' | 'schedule' | null = null;
       if (data.reply.toLowerCase().includes('google') || data.reply.toLowerCase().includes('workshop')) cardType = 'event';
       if (data.reply.toLowerCase().includes('schedule') || data.reply.toLowerCase().includes('course')) cardType = 'schedule';
       
       setMessages(prev => [...prev, { 
-        id: 'msg-' + Date.now(), 
+        id: `${conversationId}-agent-${prev.length}`,
         role: 'agent', 
         text: data.reply, 
         ui_card: cardType,
@@ -62,11 +120,13 @@ function App() {
     } catch (error) {
       console.error('Error fetching from backend:', error);
       setMessages(prev => [...prev, { 
-        id: 'msg-err', 
+        id: `${conversationId}-err-${prev.length}`,
         role: 'agent', 
-        text: 'Connection to Hermes Agent failed. Is the FastAPI backend running?' 
+        text: `Connection to Hermes Agent failed. Please check the backend console for errors. \n\n**Details:**\n\`\`\`\n${error instanceof Error ? error.message : 'An unknown error occurred.'}\n\`\`\``
       }]);
+      setBackendHealth('offline');
     } finally {
+      setActiveAgent('Orchestrator'); // Reset to default after response
       setIsTyping(false);
     }
   };
@@ -102,10 +162,10 @@ function App() {
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Active Agents</h3>
             
             <div className="space-y-3">
-              <AgentStatus icon={Cpu} name="Orchestrator" status={isTyping ? 'Active' : 'Idle'} statusColor={isTyping ? 'bg-emerald-400 animate-pulse' : 'bg-blue-400'} delay={0.1} />
-              <AgentStatus icon={Briefcase} name="Placement Agent" status="Sleeping" statusColor="bg-slate-600" delay={0.2} />
-              <AgentStatus icon={CalendarIcon} name="Events Agent" status="Sleeping" statusColor="bg-slate-600" delay={0.3} />
-              <AgentStatus icon={Library} name="Knowledge Agent" status="Sleeping" statusColor="bg-slate-600" delay={0.4} />
+              <AgentStatus icon={Cpu} name="Orchestrator" status={isTyping && activeAgent === 'Orchestrator' ? 'Active' : 'Idle'} statusColor={isTyping && activeAgent === 'Orchestrator' ? 'bg-emerald-400 animate-pulse' : 'bg-blue-400'} delay={0.1} />
+              <AgentStatus icon={Briefcase} name="Placement Agent" status={isTyping && activeAgent === 'Placement Agent' ? 'Active' : 'Sleeping'} statusColor={isTyping && activeAgent === 'Placement Agent' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'} delay={0.2} />
+              <AgentStatus icon={CalendarIcon} name="Events Agent" status={isTyping && activeAgent === 'Events Agent' ? 'Active' : 'Sleeping'} statusColor={isTyping && activeAgent === 'Events Agent' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'} delay={0.3} />
+              <AgentStatus icon={Library} name="Knowledge Agent" status={isTyping && activeAgent === 'Knowledge Agent' ? 'Active' : 'Sleeping'} statusColor={isTyping && activeAgent === 'Knowledge Agent' ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'} delay={0.4} />
             </div>
           </motion.div>
         </div>
@@ -117,7 +177,13 @@ function App() {
               <Server className="w-3.5 h-3.5 text-emerald-400" />
               FastAPI Bridge
             </div>
-            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded shadow-[0_0_10px_rgba(16,185,129,0.2)]">Online</span>
+            <span className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+              backendHealth === 'online' 
+                ? 'text-emerald-400 bg-emerald-400/10 shadow-[0_0_10px_rgba(16,185,129,0.2)]' 
+                : backendHealth === 'offline'
+                ? 'text-red-400 bg-red-400/10 shadow-[0_0_10px_rgba(248,113,113,0.2)]'
+                : 'text-yellow-400 bg-yellow-400/10'
+            }`}>{backendHealth === 'online' ? 'Online' : backendHealth === 'offline' ? 'Offline' : 'Checking...'}</span>
           </div>
         </div>
       </aside>
@@ -318,6 +384,31 @@ function App() {
             </div>
           </div>
         </div>
+
+        {/* Backend Health Indicator - Bottom Left */}
+        <button
+          onClick={checkHealth}
+          title={`Backend: ${backendHealth}`}
+          className="fixed bottom-6 left-[19.5rem] z-50 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/80 border border-white/10 backdrop-blur-md shadow-lg hover:bg-slate-800/80 transition-all cursor-pointer group"
+        >
+          <span className="relative flex h-3 w-3">
+            {backendHealth === 'online' && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            )}
+            <span className={`relative inline-flex rounded-full h-3 w-3 ${
+              backendHealth === 'online'
+                ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]'
+                : backendHealth === 'offline'
+                ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'
+                : 'bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.6)] animate-pulse'
+            }`}></span>
+          </span>
+          <span className={`text-[10px] font-mono uppercase tracking-wider font-bold ${
+            backendHealth === 'online' ? 'text-emerald-400' : backendHealth === 'offline' ? 'text-red-400' : 'text-yellow-400'
+          }`}>
+            {backendHealth === 'online' ? 'API Online' : backendHealth === 'offline' ? 'API Offline' : 'Checking...'}
+          </span>
+        </button>
       </main>
     </div>
   );
