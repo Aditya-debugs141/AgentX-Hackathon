@@ -25,3 +25,8 @@ This project is configured for single-click deployment on [Vercel](https://verce
    the frontend then calls `/health` and `/chat` on the current Vercel origin.
 6. Redeploy after adding or changing variables; Vercel applies them to new
    deployments only.
+
+For local builds, Vite is configured to read the repository-root `.env` via
+`frontend/vite.config.ts`. Browser-exposed values must still use the `VITE_`
+prefix; backend-only values such as `HERMES_API_KEY` are never exposed to the
+frontend.
