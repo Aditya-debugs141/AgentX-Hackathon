@@ -124,7 +124,7 @@ export default function ChatWindow({
 							placeholder={
 								isTyping ? "Dosth is reasoning..." : "Ask Dosth anything about campus..."
 							}
-							className="flex-1 bg-transparent border-none text-slate-100 px-4 py-3.5 focus:outline-none text-[15px] placeholder:text-slate-500 resize-none leading-relaxed disabled:cursor-not-allowed disabled:opacity-60 font-medium"
+							className="flex-1 bg-transparent border-none text-slate-100 px-4 py-3.5 focus:outline-none text-[15px] placeholder:text-slate-500 resize-none leading-relaxed disabled:cursor-not-allowed disabled:opacity-60 font-medium [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
 						/>
 						<button
 							onClick={() => void send()}
