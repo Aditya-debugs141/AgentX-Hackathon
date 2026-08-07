@@ -11,7 +11,7 @@ function App() {
     { id: 'msg-0', role: 'agent', text: 'System initialized. I am your Smart Campus Assistant powered by the Hermes Orchestrator Engine. How can I help you today?' }
   ]);
   const [isTyping, setIsTyping] = useState(false);
-  const [conversationId, setConversationId] = useState('conv_' + Math.random().toString(36).substring(7));
+  const [conversationId] = useState('conv_' + Math.random().toString(36).substring(7));
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom of chat
@@ -32,7 +32,8 @@ function App() {
     setIsTyping(true);
 
     try {
-      const response = await fetch('http://localhost:8000/chat', {
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiBaseUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

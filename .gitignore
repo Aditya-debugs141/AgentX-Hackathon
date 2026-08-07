@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+.vercel/
+
+# Environment files
+.env
+.env.local
+.tmp/
+
+# Temporary files
+temp
