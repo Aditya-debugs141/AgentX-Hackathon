@@ -32,3 +32,38 @@ export function sendChat(payload: ChatRequest): Promise<ChatResponse> {
     body: JSON.stringify(payload),
   });
 }
+
+export interface StreamEvent {
+  type?: string;
+  [key: string]: unknown;
+}
+
+export async function streamChat(payload: ChatRequest, onEvent: (event: StreamEvent) => void): Promise<void> {
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'text/event-stream' });
+  if (WEB_API_KEY) headers.set('x-api-key', WEB_API_KEY);
+  const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok || !response.body) throw new Error((await response.text()) || `Stream failed with status ${response.status}`);
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const consume = (block: string) => {
+    const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+    if (!data || data === '[DONE]') return;
+    try { onEvent(JSON.parse(data) as StreamEvent); } catch { /* Ignore keep-alive or non-JSON SSE frames. */ }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const blocks = buffer.split('\n\n');
+    buffer = blocks.pop() ?? '';
+    blocks.forEach(consume);
+    if (done) break;
+  }
+  if (buffer.trim()) consume(buffer);
+}

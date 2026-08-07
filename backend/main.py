@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 # Load the local file for development, while preserving variables injected by
 # Vercel (python-dotenv does not overwrite existing environment variables).
@@ -232,6 +233,56 @@ async def chat_endpoint(request: ChatRequest):
             # Handle network errors (e.g., connection refused)
             logger.error(f"[HTTP REQUEST FAILED] Connection error targeting '{target_url}': {exc}")
             raise HTTPException(status_code=502, detail=f"Failed to connect to Hermes Agent: {str(exc)}")
+
+
+@app.post("/chat/stream", dependencies=[Depends(verify_frontend_api_key)])
+async def chat_stream_endpoint(request: ChatRequest):
+    """Proxy Hermes SSE events immediately so progress reaches the browser."""
+    target_url = env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL")
+    hermes_api_key = env_value("HERMES_API_KEY", "API_SERVER_KEY") or ""
+
+    if not target_url:
+        raise HTTPException(status_code=500, detail="HERMES_ENDPOINT environment variable is missing on server.")
+
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+    if hermes_api_key:
+        headers["Authorization"] = f"Bearer {hermes_api_key}"
+
+    payload = {
+        "model": "hermes-agent",
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": load_system_prompt()},
+            {"role": "user", "content": request.message},
+        ],
+    }
+
+    async def relay() -> AsyncIterator[bytes]:
+        async with httpx.AsyncClient(timeout=None) as client:
+            try:
+                async with client.stream("POST", target_url, json=payload, headers=headers) as response:
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        logger.error("[HERMES STREAM ERROR] Status=%s, Body=%s", response.status_code, body.decode(errors="replace"))
+                        yield f'data: {{"type":"error","status":{response.status_code}}}\n\n'.encode()
+                        return
+
+                    async for chunk in response.aiter_raw():
+                        if chunk:
+                            yield chunk
+            except httpx.RequestError as exc:
+                logger.error("[HTTP STREAM FAILED] Connection error targeting '%s': %s", target_url, exc)
+                yield b'data: {"type":"error","status":502}\n\n'
+
+    return StreamingResponse(
+        relay(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 if __name__ == "__main__":
     import uvicorn
