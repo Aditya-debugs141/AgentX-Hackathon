@@ -1,7 +1,4 @@
 import os
-import hmac
-import hashlib
-import json
 import logging
 import httpx
 from pathlib import Path
@@ -9,14 +6,15 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Dict, List, Optional
 
 # Load the local file for development, while preserving variables injected by
 # Vercel (python-dotenv does not overwrite existing environment variables).
 # Vercel does not deploy the ignored .env file, so production values must be
 # configured in the Vercel project settings.
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[1] / "sysprompt.txt"
 
 
 def env_value(*names: str) -> Optional[str]:
@@ -27,6 +25,20 @@ def env_value(*names: str) -> Optional[str]:
             return value.strip()
     return None
 
+
+def load_system_prompt() -> str:
+    """Load the configurable Hermes system prompt from the repository root."""
+    try:
+        prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.error("[CONFIG ERROR] Could not load system prompt from %s: %s", SYSTEM_PROMPT_PATH, exc)
+        raise HTTPException(status_code=500, detail="sysprompt.txt is missing or unreadable on the server.") from exc
+
+    if not prompt:
+        logger.error("[CONFIG ERROR] System prompt file is empty: %s", SYSTEM_PROMPT_PATH)
+        raise HTTPException(status_code=500, detail="sysprompt.txt is empty on the server.")
+    return prompt
+
 # Configure standard logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("agentx")
@@ -36,10 +48,11 @@ async def lifespan(app: FastAPI):
     logger.info("[STARTUP] AgentX API is starting up...")
     logger.info(
         "[CONFIG] HERMES_ENDPOINT loaded=%s; HERMES_API_KEY loaded=%s; "
-        "WEB_API_KEY loaded=%s; mode=%s",
+        "WEB_API_KEY loaded=%s; system_prompt_loaded=%s; mode=%s",
         bool(env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL")),
         bool(env_value("HERMES_API_KEY", "API_SERVER_KEY")),
         bool(env_value("WEB_API_KEY")),
+        SYSTEM_PROMPT_PATH.is_file() and SYSTEM_PROMPT_PATH.stat().st_size > 0,
         os.getenv("HERMES_MODE", "proxy"),
     )
     yield
@@ -63,11 +76,81 @@ class ChatRequest(BaseModel):
     conversation_id: str
     message: str
 
+class AssistantMessage(BaseModel):
+    role: str = "assistant"
+    content: str
+
+class AgentExecution(BaseModel):
+    name: str
+    status: str
+
+class Execution(BaseModel):
+    planner: Optional[str] = None
+    agents: List[AgentExecution] = Field(default_factory=list)
+    trace: List[str] = Field(default_factory=list)
+
+class UICard(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+class Source(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    title: str
+    url: Optional[str] = None
+
 class ChatResponse(BaseModel):
-    reply: str
+    version: str = "1.0"
     conversation_id: str
-    trace: List[str]
-    sources: List[str]
+    message: AssistantMessage
+    execution: Execution = Field(default_factory=Execution)
+    cards: List[UICard] = Field(default_factory=list)
+    sources: List[Source] = Field(default_factory=list)
+
+
+def _hermes_message(data: Dict[str, Any]) -> Dict[str, str]:
+    """Read either the AgentX envelope or an OpenAI-compatible Hermes result."""
+    message = data.get("message")
+    if isinstance(message, dict):
+        content = message.get("content", "")
+        return {"role": str(message.get("role", "assistant")), "content": str(content)}
+
+    choices = data.get("choices") or []
+    choice_message = choices[0].get("message", {}) if choices and isinstance(choices[0], dict) else {}
+    content = choice_message.get("content", "") if isinstance(choice_message, dict) else ""
+    return {"role": "assistant", "content": str(content)}
+
+
+def _structured_response(data: Dict[str, Any], conversation_id: str) -> ChatResponse:
+    """Normalize Hermes metadata without inventing agent activity on the client."""
+    message = _hermes_message(data)
+    execution_data = data.get("execution")
+    execution = Execution.model_validate(execution_data or {})
+
+    cards = []
+    for card in (data.get("cards") or []):
+        if not isinstance(card, dict):
+            continue
+        # Accept both the canonical {type, payload} shape and the flattened
+        # shape shown in early Hermes responses.
+        normalized_card = dict(card)
+        if not isinstance(normalized_card.get("payload"), dict):
+            normalized_card["payload"] = {
+                key: value for key, value in normalized_card.items() if key != "type"
+            }
+        cards.append(UICard.model_validate(normalized_card))
+    sources = [Source.model_validate(source) for source in (data.get("sources") or []) if isinstance(source, dict)]
+
+    return ChatResponse(
+        version=str(data.get("version", "1.0")),
+        conversation_id=str(data.get("conversation_id", conversation_id)),
+        message=AssistantMessage.model_validate(message),
+        execution=execution,
+        cards=cards,
+        sources=sources,
+    )
 
 def verify_frontend_api_key(x_api_key: Optional[str] = Header(None)):
     """Optional security: check API key from frontend if WEB_API_KEY is set."""
@@ -114,7 +197,10 @@ async def chat_endpoint(request: ChatRequest):
 
     payload = {
         "model": "hermes-agent",
-        "messages": [{"role": "user", "content": request.message}]
+        "messages": [
+            {"role": "system", "content": load_system_prompt()},
+            {"role": "user", "content": request.message},
+        ]
     }
 
     logger.info(f"[FORWARDING] Forwarding request to Hermes Agent at {target_url}")
@@ -128,22 +214,15 @@ async def chat_endpoint(request: ChatRequest):
 
             data = res.json()
             
-            # Extract the reply from the OpenAI-style response
-            reply_text = ""
-            try:
-                reply_text = data["choices"][0]["message"]["content"]
-            except (IndexError, KeyError, TypeError) as e:
-                logger.error(f"Could not parse reply from Hermes response: {e}. Full response: {data}")
-                reply_text = f"Error parsing agent response: {str(data)}"
-
-            logger.info(f"[SUCCESS] Reply received ({len(reply_text)} chars)")
-
-            return ChatResponse(
-                reply=reply_text,
-                conversation_id=request.conversation_id,
-                trace=["Hermes Agent Execution"], # Simplified trace
-                sources=[]
+            response = _structured_response(data, request.conversation_id)
+            logger.info(
+                "[SUCCESS] Reply received (%s chars); agents=%s; cards=%s; sources=%s",
+                len(response.message.content),
+                len(response.execution.agents),
+                len(response.cards),
+                len(response.sources),
             )
+            return response
 
         except httpx.HTTPStatusError as exc:
             # Handle 4xx/5xx errors from the Hermes Agent
