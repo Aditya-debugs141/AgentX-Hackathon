@@ -1,0 +1,7 @@
+# Dependencies for the Vercel Python function in api/index.py.
+# Keep this at the repository root so @vercel/python discovers it.
+fastapi>=0.100.0
+pydantic>=2.0.0
+uvicorn>=0.20.0
+httpx>=0.24.0
+python-dotenv>=1.0.0
