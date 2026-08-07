@@ -24,7 +24,7 @@ export default function App() {
 						transition={{ duration: 0.5, ease: "easeOut" }}
 						className="flex h-screen w-full"
 					>
-						<Sidebar agents={chat.agents} health={backend.health} />
+						<Sidebar agents={chat.agents} health={backend.health} onBack={() => setIsChatStarted(false)} />
 						<ChatWindow
 							messages={chat.messages}
 							isTyping={chat.isTyping}
