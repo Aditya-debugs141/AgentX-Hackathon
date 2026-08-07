@@ -30,3 +30,8 @@ For local builds, Vite is configured to read the repository-root `.env` via
 `frontend/vite.config.ts`. Browser-exposed values must still use the `VITE_`
 prefix; backend-only values such as `HERMES_API_KEY` are never exposed to the
 frontend.
+
+
+### Hosted Upon
+
+The completed website is deployed on Vercel at the URL: https://agentx-chatbot.vercel.app/
