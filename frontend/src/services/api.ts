@@ -3,7 +3,7 @@ import type { ChatRequest, ChatResponse, HealthResponse } from '../types/api';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:8000' : '');
 const WEB_API_KEY = import.meta.env.VITE_WEB_API_KEY;
 
-console.info('[AgentX config]', {
+console.info('[Dosth config]', {
   mode: import.meta.env.MODE,
   apiBaseUrlConfigured: Boolean(import.meta.env.VITE_API_BASE_URL),
   apiRouting: API_BASE_URL || 'same-origin',

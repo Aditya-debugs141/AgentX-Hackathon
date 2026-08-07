@@ -92,7 +92,7 @@ export default function ChatWindow({
 							onChange={(event) => setPrompt(event.target.value)}
 							onKeyDown={onKeyDown}
 							placeholder={
-								isTyping ? "AgentX is responding..." : "Message AgentX..."
+								isTyping ? "Dosth is responding..." : "Message Dosth..."
 							}
 							className="flex-1 bg-transparent border-none text-slate-200 px-4 py-3 focus:outline-none text-sm placeholder:text-slate-500 resize-none leading-relaxed disabled:cursor-not-allowed disabled:opacity-60"
 						/>
