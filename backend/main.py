@@ -39,13 +39,13 @@ class ChatResponse(BaseModel):
     sources: List[str]
 
 def verify_frontend_api_key(x_api_key: Optional[str] = Header(None)):
-    """Optional security layer: check API key from frontend if FRONTEND_API_KEY env var is configured."""
-    frontend_api_key = os.getenv("FRONTEND_API_KEY", "")
-    if frontend_api_key:
-        if x_api_key != frontend_api_key:
-            logger.warning("[AUTH] Frontend API key verification failed!")
+    """Optional security layer: check API key from frontend if WEB_API_KEY env var is configured."""
+    web_api_key = os.getenv("WEB_API_KEY", "")
+    if web_api_key:
+        if x_api_key != web_api_key:
+            logger.warning("[AUTH] Web API key verification failed!")
             raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
-        logger.info("[AUTH] Frontend API key verified successfully.")
+        logger.info("[AUTH] Web API key verified successfully.")
 
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_frontend_api_key)])
 async def chat_endpoint(request: ChatRequest):

@@ -15,3 +15,6 @@ build/
 
 # Temporary files
 temp
+
+# Venv Specific
+.venv
