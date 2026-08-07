@@ -24,6 +24,10 @@
       "dest": "api/index.py"
     },
     {
+      "src": "/auth/session",
+      "dest": "api/index.py"
+    },
+    {
       "src": "/(.*)",
       "dest": "frontend/$1"
     }

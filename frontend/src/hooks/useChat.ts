@@ -80,6 +80,13 @@ export function useChat() {
       if (typeof event.trace === 'string') {
         setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, execution: { ...(item.execution ?? { agents: [], trace: [] }), trace: [...(item.execution?.trace ?? []), event.trace as string] } } : item));
       }
+      if (event.type === 'hermes.tool.progress' || event.type === 'tool.started' || event.type === 'tool.completed' || event.type === 'tool.failed') {
+        const toolName = typeof event.tool_name === 'string' ? event.tool_name : 'Hermes tool';
+        const status = typeof event.status === 'string' ? event.status : event.type.replace('hermes.tool.', '').replace('tool.', '');
+        const preview = typeof event.preview === 'string' ? event.preview : typeof event.delta === 'string' ? event.delta : '';
+        const trace = preview ? `${toolName}: ${preview}` : `${toolName} ${status}`;
+        setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, execution: { ...(item.execution ?? { agents: [], trace: [] }), trace: [...(item.execution?.trace ?? []), trace] } } : item));
+      }
 
       const message = event.message as ChatResponse['message'] | undefined;
       if (message && typeof message.content === 'string') updateAssistant({ text: message.content });

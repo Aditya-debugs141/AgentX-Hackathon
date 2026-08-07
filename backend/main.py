@@ -1,6 +1,12 @@
 import os
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import httpx
+import secrets
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -40,6 +46,46 @@ def load_system_prompt() -> str:
         raise HTTPException(status_code=500, detail="sysprompt.txt is empty on the server.")
     return prompt
 
+
+AUTH_TOKEN_TTL_SECONDS = 15 * 60
+
+
+def _auth_signing_secret() -> str:
+    secret = env_value("AUTH_SIGNING_SECRET")
+    if not secret:
+        raise HTTPException(status_code=503, detail="AUTH_SIGNING_SECRET is not configured on the server.")
+    return secret
+
+
+def _encode_token_part(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _issue_session_token() -> str:
+    now = int(time.time())
+    payload = {"iat": now, "exp": now + AUTH_TOKEN_TTL_SECONDS, "sid": secrets.token_urlsafe(16)}
+    body = _encode_token_part(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    signature = hmac.new(_auth_signing_secret().encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    return f"{body}.{_encode_token_part(signature)}"
+
+
+def verify_user_token(authorization: Optional[str] = Header(None)):
+    """Validate a short-lived server-issued bearer token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid session token")
+
+    try:
+        body, encoded_signature = authorization[7:].strip().split(".", 1)
+        expected = hmac.new(_auth_signing_secret().encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+        supplied = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
+        if not hmac.compare_digest(expected, supplied):
+            raise ValueError("invalid signature")
+        payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+        if int(payload["exp"]) <= int(time.time()):
+            raise ValueError("expired token")
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired session token")
+
 # Configure standard logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("agentx")
@@ -49,10 +95,10 @@ async def lifespan(app: FastAPI):
     logger.info("[STARTUP] AgentX API is starting up...")
     logger.info(
         "[CONFIG] HERMES_ENDPOINT loaded=%s; HERMES_API_KEY loaded=%s; "
-        "WEB_API_KEY loaded=%s; system_prompt_loaded=%s; mode=%s",
+        "AUTH_SIGNING_SECRET loaded=%s; system_prompt_loaded=%s; mode=%s",
         bool(env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL")),
         bool(env_value("HERMES_API_KEY", "API_SERVER_KEY")),
-        bool(env_value("WEB_API_KEY")),
+        bool(env_value("AUTH_SIGNING_SECRET")),
         SYSTEM_PROMPT_PATH.is_file() and SYSTEM_PROMPT_PATH.stat().st_size > 0,
         os.getenv("HERMES_MODE", "proxy"),
     )
@@ -153,18 +199,10 @@ def _structured_response(data: Dict[str, Any], conversation_id: str) -> ChatResp
         sources=sources,
     )
 
-def verify_frontend_api_key(x_api_key: Optional[str] = Header(None)):
-    """Optional security: check API key from frontend if WEB_API_KEY is set."""
-    web_api_key = os.getenv("WEB_API_KEY")
-    logger.info(
-        "[CONFIG] WEB_API_KEY loaded=%s; request_key_received=%s",
-        bool(web_api_key and web_api_key.strip()),
-        bool(x_api_key),
-    )
-    if web_api_key and x_api_key != web_api_key:
-        logger.warning("[AUTH] Web API key verification failed!")
-        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
-    logger.info("[AUTH] Web API key verified successfully.")
+@app.post("/auth/session")
+async def issue_session():
+    """Issue a short-lived browser session token without exposing a server secret."""
+    return {"token": _issue_session_token(), "expires_in": AUTH_TOKEN_TTL_SECONDS}
 
 @app.get("/health")
 async def health_check():
@@ -176,7 +214,7 @@ async def health_check():
         "mode": os.getenv("HERMES_MODE", "proxy")
     }
 
-@app.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_frontend_api_key)])
+@app.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_user_token)])
 async def chat_endpoint(request: ChatRequest):
     """Proxies a chat message to the Hermes Agent and returns the response."""
     target_url = env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL")
@@ -235,7 +273,7 @@ async def chat_endpoint(request: ChatRequest):
             raise HTTPException(status_code=502, detail=f"Failed to connect to Hermes Agent: {str(exc)}")
 
 
-@app.post("/chat/stream", dependencies=[Depends(verify_frontend_api_key)])
+@app.post("/chat/stream", dependencies=[Depends(verify_user_token)])
 async def chat_stream_endpoint(request: ChatRequest):
     """Proxy Hermes SSE events immediately so progress reaches the browser."""
     target_url = env_value("HERMES_ENDPOINT", "HERMES_ENDPOINT_URL")
