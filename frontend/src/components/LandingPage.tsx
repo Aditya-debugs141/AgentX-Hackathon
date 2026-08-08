@@ -96,7 +96,7 @@ export default function LandingPage({ onStart }: { onStart: () => void }) {
 		exit: {
 			opacity: 0,
 			y: -40,
-			transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] },
+			transition: { duration: 0.5, ease: "easeOut" as const },
 		},
 	};
 

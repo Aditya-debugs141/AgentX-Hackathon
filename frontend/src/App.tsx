@@ -27,7 +27,7 @@ export default function App() {
 						<Sidebar agents={chat.agents} health={backend.health} onBack={() => setIsChatStarted(false)} />
 						<ChatWindow
 							messages={chat.messages}
-							isTyping={chat.isTyping}
+							isTyping={chat.isResponding}
 							onSend={chat.sendMessage}
 						/>
 						<button
