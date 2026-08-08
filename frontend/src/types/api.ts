@@ -24,13 +24,16 @@ export interface Source {
 export interface ChatResponse {
   version: string;
   conversation_id: string;
-  message: {
-    role: 'assistant' | string;
-    content: string;
-  };
+  message: { role: string; content: string };
   execution: Execution;
   cards: UICard[];
   sources: Source[];
+}
+
+export interface ChatRequest {
+  conversation_id: string;
+  message: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 export interface HealthResponse {
@@ -39,7 +42,7 @@ export interface HealthResponse {
   mode: string;
 }
 
-export interface ChatRequest {
-  conversation_id: string;
-  message: string;
+export interface HermesStreamEvent {
+  type: string;
+  [key: string]: unknown;
 }
