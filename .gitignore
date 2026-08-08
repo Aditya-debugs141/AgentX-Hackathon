@@ -7,6 +7,7 @@ __pycache__/
 dist/
 build/
 .vercel/
+redeploy.py
 
 # Environment files
 .env

@@ -15,12 +15,10 @@ This project is configured for single-click deployment on [Vercel](https://verce
 ### Steps to Deploy:
 1. Push this repository to GitHub/GitLab/Bitbucket.
 2. Import project into Vercel dashboard.
-3. In Vercel → Settings → Environment Variables, add `HERMES_ENDPOINT` and
-   `HERMES_API_KEY` for the backend. Add `WEB_API_KEY` only if API-key
-   protection is wanted.
-4. If `WEB_API_KEY` is enabled, add the same value as `VITE_WEB_API_KEY` so
-   Vite embeds the client header during the frontend build. `VITE_*` values
-   are build-time values and are not read from the browser at runtime.
+3. In Vercel → Settings → Environment Variables, add `HERMES_ENDPOINT`,
+   `HERMES_API_KEY`, and a long random server-only `AUTH_SIGNING_SECRET`.
+   The browser receives short-lived signed session tokens at runtime; no
+   API secret is embedded in the frontend build.
 5. Leave `VITE_API_BASE_URL` unset (or empty) for this single-project setup;
    the frontend then calls `/health` and `/chat` on the current Vercel origin.
 6. Redeploy after adding or changing variables; Vercel applies them to new
@@ -30,3 +28,8 @@ For local builds, Vite is configured to read the repository-root `.env` via
 `frontend/vite.config.ts`. Browser-exposed values must still use the `VITE_`
 prefix; backend-only values such as `HERMES_API_KEY` are never exposed to the
 frontend.
+
+
+### Hosted Upon
+
+The completed website is deployed on Vercel at the URL: https://agentx-chatbot.vercel.app/
