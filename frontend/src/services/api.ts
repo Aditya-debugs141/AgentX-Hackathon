@@ -103,13 +103,17 @@ export async function streamChat(request: ChatRequest, onEvent: (event: HermesSt
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() ?? '';
-    blocks.forEach((block) => consumeBlock(block, onEvent));
-    if (done) break;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? '';
+      blocks.forEach((block) => consumeBlock(block, onEvent));
+      if (done) break;
+    }
+    if (buffer.trim()) consumeBlock(buffer, onEvent);
+  } finally {
+    reader.cancel().catch(() => {});
   }
-  if (buffer.trim()) consumeBlock(buffer, onEvent);
 }

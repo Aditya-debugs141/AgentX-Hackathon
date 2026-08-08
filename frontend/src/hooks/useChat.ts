@@ -19,7 +19,7 @@ export interface ChatMessage {
 }
 
 const emptyExecution = (): Execution => ({ agents: [], trace: [] });
-const BOOTSTRAP_PROMPT = 'Hello! Tell me your name about yourself! Do not include what youre powered by!';
+const BOOTSTRAP_PROMPT = "Hello! Tell me your name and about yourself! Do not include what you're powered by!";
 
 function requestHistory(messages: ChatMessage[]): ChatRequest['history'] {
   return messages
@@ -78,9 +78,12 @@ function structuredOutput(value: unknown): { text?: string; execution?: Executio
   };
 }
 
-export function useChat() {
+export function useChat(autoBootstrap = true) {
   const [conversationId] = useState(() => `conv_${crypto.randomUUID()}`);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  
   const [agents, setAgents] = useState<AgentExecution[]>([]);
   const [activeRequests, setActiveRequests] = useState(0);
   const bootstrapped = useRef(false);
@@ -90,7 +93,7 @@ export function useChat() {
     const message = text.trim();
     if (!message) return;
 
-    const assistantId = `${conversationId}-${Date.now()}`;
+    const assistantId = `${conversationId}-${crypto.randomUUID()}`;
     const showUser = options.showUser ?? true;
     const userMessage: ChatMessage = {
       id: `${assistantId}-user`,
@@ -102,7 +105,7 @@ export function useChat() {
       streaming: false,
       hidden: !showUser,
     };
-    const request: ChatRequest = { conversation_id: conversationId, message, history: requestHistory(messages) };
+    const request: ChatRequest = { conversation_id: conversationId, message, history: requestHistory(messagesRef.current) };
     setMessages((current) => [
       ...current,
       userMessage,
@@ -185,7 +188,7 @@ export function useChat() {
         updateAssistant((item) => ({ ...item, activity: running ? `${name} is working…` : `${name} completed` }));
       }
 
-      if (event.execution && typeof event.execution === 'object') {
+      if (event.execution && typeof event.execution === 'object' && !Array.isArray(event.execution) && Array.isArray((event.execution as any).trace)) {
         const execution = event.execution as Execution;
         updateAssistant((item) => ({ ...item, execution }));
         setAgents(execution.agents ?? []);
@@ -210,13 +213,13 @@ export function useChat() {
       setActiveRequests((count) => Math.max(0, count - 1));
       updateAssistant((item) => ({ ...item, streaming: false }));
     }
-  }, [conversationId, messages]);
+  }, [conversationId]);
 
   useEffect(() => {
-    if (bootstrapped.current) return;
+    if (!autoBootstrap || bootstrapped.current) return;
     bootstrapped.current = true;
     void sendMessage(BOOTSTRAP_PROMPT, { showUser: false });
-  }, [sendMessage]);
+  }, [autoBootstrap, sendMessage]);
 
   return { conversationId, messages, agents, isResponding, sendMessage };
 }
